@@ -1,12 +1,7 @@
 use image::Rgba;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ToolResult {
-    pub success: bool,
-    pub output_path: Option<String>,
-    pub message: String,
-}
+use crate::types::ToolResult;
 
 pub fn strip_metadata(input_path: String, output_path: String) -> Result<ToolResult, String> {
     let img = image::open(&input_path).map_err(|e| e.to_string())?;

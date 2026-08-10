@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/image-core"]
+members = ["src-tauri", "crates/image-core", "src-wasm"]
 
 [workspace.package]
 version = "0.6.0"

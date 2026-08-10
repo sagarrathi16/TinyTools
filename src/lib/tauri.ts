@@ -495,7 +495,7 @@ async function loadWasm(): Promise<any> {
   if (wasmModule) return wasmModule;
   try {
     // @ts-ignore - WASM module built separately with wasm-pack
-    wasmModule = await import('../../src-wasm/pkg');
+    wasmModule = await import('./wasm');
     return wasmModule;
   } catch (e) {
     console.warn('WASM module not available:', e);

@@ -1,11 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ToolResult {
-    pub success: bool,
-    pub output_path: Option<String>,
-    pub message: String,
-}
+use crate::types::ToolResult;
 
 pub fn process_image(
     input_path: String,

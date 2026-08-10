@@ -5,12 +5,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ToolResult {
-    pub success: bool,
-    pub output_path: Option<String>,
-    pub message: String,
-}
+use crate::types::ToolResult;
 
 pub fn compress_image(
     input_path: String,

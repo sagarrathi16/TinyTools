@@ -1,12 +1,7 @@
 use image::{GenericImageView, Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ToolResult {
-    pub success: bool,
-    pub output_path: Option<String>,
-    pub message: String,
-}
+use crate::types::ToolResult;
 
 fn perceptual_dist(p: Rgba<u8>, bg: [u8; 3]) -> f64 {
     let dr = p[0] as f64 - bg[0] as f64;

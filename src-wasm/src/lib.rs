@@ -3,7 +3,7 @@ use image_core::{
     depth_blur, expand_canvas, flip_image, grayscale, inpaint_image, process_image,
     raster_to_svg, redact_regions, remove_background, rotate_image, sharpen_image,
     sepia_filter, smart_crop, smart_sharpen, split_image, stitch_images, strip_metadata,
-    upscale_image, ToolResult,
+    upscale_image, blur_image, resize_image, ToolResult,
 };
 use js_sys::Uint8Array;
 use serde::{Deserialize, Serialize};
