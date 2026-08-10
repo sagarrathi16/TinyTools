@@ -628,10 +628,31 @@ fn uuid_simple() -> String {
 
 use axum::routing::post;
 
+fn get_dist_dir() -> std::path::PathBuf {
+    let cwd_dist = std::path::PathBuf::from("dist");
+    if cwd_dist.join("index.html").exists() {
+        return cwd_dist;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let exe_dist = parent.join("dist");
+            if exe_dist.join("index.html").exists() {
+                return exe_dist;
+            }
+            if parent.join("index.html").exists() {
+                return parent.to_path_buf();
+            }
+        }
+    }
+    cwd_dist
+}
+
 async fn spa_fallback() -> Html<String> {
-    let index_html = tokio::fs::read_to_string("dist/index.html")
+    let dist_dir = get_dist_dir();
+    let index_path = dist_dir.join("index.html");
+    let index_html = tokio::fs::read_to_string(&index_path)
         .await
-        .unwrap_or_else(|_| "<html><body>App not found</body></html>".to_string());
+        .unwrap_or_else(|_| "<html><body>App index.html not found</body></html>".to_string());
     Html(index_html)
 }
 
@@ -639,8 +660,16 @@ pub async fn start_homelab_server(
     local_ip: &str,
 ) -> Result<(u16, tokio::task::JoinHandle<()>), String> {
     install_tls_provider();
-    let listener = std::net::TcpListener::bind("0.0.0.0:0")
-        .map_err(|e| format!("Failed to bind server: {}", e))?;
+
+    let port_env = std::env::var("TINYTOOLS_PORT").ok().and_then(|p| p.parse::<u16>().ok());
+    let listener = if let Some(req_port) = port_env {
+        std::net::TcpListener::bind(format!("0.0.0.0:{}", req_port))
+            .map_err(|e| format!("Failed to bind to requested port {}: {}", req_port, e))?
+    } else {
+        std::net::TcpListener::bind("0.0.0.0:8443")
+            .or_else(|_| std::net::TcpListener::bind("0.0.0.0:0"))
+            .map_err(|e| format!("Failed to bind server listener: {}", e))?
+    };
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
 
     let certified_key = rcgen::generate_simple_self_signed(vec![
@@ -654,6 +683,9 @@ pub async fn start_homelab_server(
     )
     .await
     .map_err(|e| format!("Failed to configure HTTPS: {}", e))?;
+
+    let dist_dir = get_dist_dir();
+    let assets_dir = dist_dir.join("assets");
 
     let state = ServerState {
         transfers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -677,7 +709,7 @@ pub async fn start_homelab_server(
         .route("/api/upload-status/:id", get(upload_status))
         .route("/api/download-transfer/:id", get(download_transfer))
         .route("/receive", get(receive_page))
-        .nest_service("/assets", ServeDir::new("dist/assets"))
+        .nest_service("/assets", ServeDir::new(assets_dir))
         .fallback(spa_fallback)
         .merge(crate::chat::server::chat_routes().with_state(()))
         .layer(axum::extract::DefaultBodyLimit::max(
@@ -693,3 +725,4 @@ pub async fn start_homelab_server(
 
     Ok((port, handle))
 }
+

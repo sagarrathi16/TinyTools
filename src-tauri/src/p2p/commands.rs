@@ -6,7 +6,7 @@ use crate::p2p::{
 };
 
 #[tauri::command]
-pub fn start_web_portal(
+pub async fn start_web_portal(
     file_path: Option<String>,
     password: Option<String>,
     receive_password: Option<String>,
@@ -15,11 +15,9 @@ pub fn start_web_portal(
         .map(|ip| ip.to_string())
         .unwrap_or_else(|_| "127.0.0.1".to_string());
 
-    let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-
     let mut transfers_map = std::collections::HashMap::new();
     if let Some(ref fp) = file_path {
-        let file_meta = std::fs::metadata(fp).map_err(|e| e.to_string())?;
+        let file_meta = tokio::fs::metadata(fp).await.map_err(|e| e.to_string())?;
         let file_name = std::path::Path::new(fp)
             .file_name()
             .and_then(|n| n.to_str())
@@ -29,12 +27,20 @@ pub fn start_web_portal(
 
         let (encrypted_data, encryption_salt, encryption_nonce, encryption_iterations) =
             if let Some(ref portal_password) = password {
-                let file_data = std::fs::read(fp).map_err(|e| e.to_string())?;
-                let encrypted = encryption::encrypt_for_web_portal(portal_password, &file_data)?;
+                let fp_clone = fp.clone();
+                let pwd_clone = portal_password.clone();
+                let (ciphertext, salt, nonce) = tokio::task::spawn_blocking(move || {
+                    let file_data = std::fs::read(&fp_clone).map_err(|e| e.to_string())?;
+                    let encrypted = encryption::encrypt_for_web_portal(&pwd_clone, &file_data)?;
+                    Ok::<(Vec<u8>, Vec<u8>, Vec<u8>), String>((encrypted.ciphertext, encrypted.salt, encrypted.nonce))
+                })
+                .await
+                .map_err(|e| e.to_string())??;
+
                 (
-                    Some(encrypted.ciphertext),
-                    Some(STANDARD.encode(encrypted.salt)),
-                    Some(STANDARD.encode(encrypted.nonce)),
+                    Some(ciphertext),
+                    Some(STANDARD.encode(salt)),
+                    Some(STANDARD.encode(nonce)),
                     Some(encryption::PORTAL_PBKDF2_ITERATIONS),
                 )
             } else {
@@ -56,44 +62,53 @@ pub fn start_web_portal(
         );
     }
 
+    let downloads_dir = tokio::task::spawn_blocking(|| {
+        dirs_next::download_dir()
+            .or_else(|| dirs_next::home_dir())
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .to_string_lossy()
+            .to_string()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
     let state = server::ServerState {
         transfers: Arc::new(tokio::sync::Mutex::new(transfers_map)),
-        downloads_dir: Arc::new(tokio::sync::Mutex::new(
-            dirs_next::download_dir()
-                .or_else(|| dirs_next::home_dir())
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .to_string_lossy()
-                .to_string(),
-        )),
+        downloads_dir: Arc::new(tokio::sync::Mutex::new(downloads_dir)),
         download_limits: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         receive_password: receive_password.clone(),
         receive_only: file_path.is_none(),
     };
 
-    let (port, handle) = rt.block_on(server::start_server(state, &local_ip))?;
+    let (port, handle) = server::start_server(state, &local_ip).await?;
 
-    // Attempt UPnP port forwarding on a best-effort basis
-    let upnp_success = rt.block_on(async {
-        match igd_next::aio::tokio::search_gateway(Default::default()).await {
-            Ok(gateway) => {
-                let local_addr = format!("{}:{}", local_ip, port);
-                match gateway
-                    .add_port(
-                        igd_next::PortMappingProtocol::TCP,
-                        port,
-                        local_addr.parse().unwrap(),
-                        3600,
-                        "TinyTools Global Share",
-                    )
-                    .await
-                {
-                    Ok(()) => true,
-                    Err(_) => false,
+    // Attempt UPnP port forwarding on a best-effort basis with a 500ms timeout
+    let upnp_success = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        async {
+            match igd_next::aio::tokio::search_gateway(Default::default()).await {
+                Ok(gateway) => {
+                    let local_addr = format!("{}:{}", local_ip, port);
+                    match gateway
+                        .add_port(
+                            igd_next::PortMappingProtocol::TCP,
+                            port,
+                            local_addr.parse().unwrap(),
+                            3600,
+                            "TinyTools Global Share",
+                        )
+                        .await
+                    {
+                        Ok(()) => true,
+                        Err(_) => false,
+                    }
                 }
+                Err(_) => false,
             }
-            Err(_) => false,
-        }
-    });
+        },
+    )
+    .await
+    .unwrap_or(false);
 
     {
         let mut guard = get_state().lock().map_err(|e| e.to_string())?;
@@ -107,7 +122,7 @@ pub fn start_web_portal(
         }
         p2p.server_handle = Some(handle);
         p2p.server_port = Some(port);
-        p2p.server_runtime = Some(rt);
+        p2p.server_runtime = None;
     }
 
     let url = format!("https://{}:{}", local_ip, port);
